@@ -473,8 +473,12 @@ func (h *PlaybackHandler) finalizeStopV2(ctx context.Context, store playback.Pro
 		return receipt
 	}
 	if !claimed {
-		// Another caller is finalizing this stop. Re-read the durable row so
-		// this response returns the completed receipt once the winner commits.
+		for i := 0; i < 20; i++ {
+			if replay, _, err := store.StopAttempt(ctx, sessionID, receipt.StopID, nil); err == nil && replay.Finalized {
+				return replay
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
 		if replay, _, err := store.StopAttempt(ctx, sessionID, receipt.StopID, nil); err == nil {
 			return replay
 		}
