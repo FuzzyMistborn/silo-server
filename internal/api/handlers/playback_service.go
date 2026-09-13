@@ -474,6 +474,11 @@ func (h *PlaybackHandler) finalizeStopV2(ctx context.Context, store playback.Pro
 		return receipt
 	}
 	if !claimed {
+		// Another caller is finalizing this stop. Re-read the durable row so
+		// this response returns the completed receipt once the winner commits.
+		if replay, _, err := store.StopAttempt(ctx, sessionID, receipt.StopID, nil); err == nil {
+			return replay
+		}
 		return receipt
 	}
 	receipt.HistoryID = h.finishStopV2(ctx, record, sessionID, receipt.Accepted)
