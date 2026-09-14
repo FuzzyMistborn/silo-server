@@ -381,11 +381,11 @@ func (h *PlaybackHandler) progressSideEffectLock(sessionID string) func() {
 	lock.mu.Lock()
 	return func() {
 		lock.mu.Unlock()
+		h.progressSideEffectLocksMu.Lock()
 		if lock.refs.Add(-1) == 0 {
-			h.progressSideEffectLocksMu.Lock()
 			h.progressSideEffectLocks.CompareAndDelete(sessionID, lock)
-			h.progressSideEffectLocksMu.Unlock()
 		}
+		h.progressSideEffectLocksMu.Unlock()
 	}
 }
 
