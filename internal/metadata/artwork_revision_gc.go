@@ -103,11 +103,43 @@ func (g *ArtworkRevisionGarbageCollector) Run(ctx context.Context) (ArtworkRevis
 		}
 	}
 
+	// Delete every claimed candidate's objects in one batched call. B2 bills
+	// this call at ~2.9s whether it carries one key or a thousand -- the cost is
+	// per call, not per object -- so issuing it per candidate made a
+	// 100-candidate run take ~290s and the queue could never drain. Deleting
+	// ahead of the per-candidate guard is consistent with the design's existing
+	// assumption that a path can race back into use after its objects are gone:
+	// that is exactly what the pending-heal path below repairs.
+	predeleted := make(map[int64]struct{}, len(due))
+	if len(due) > 0 {
+		keys := make([]string, 0, len(due)*4)
+		for _, candidate := range due {
+			objectKeys := candidate.objectKeys
+			if len(objectKeys) == 0 {
+				objectKeys = artworkkey.ObjectKeys(candidate.originalPath, candidate.imageType)
+			}
+			if len(objectKeys) == 0 {
+				continue
+			}
+			keys = append(keys, objectKeys...)
+			predeleted[candidate.id] = struct{}{}
+		}
+		if len(keys) > 0 {
+			if _, delErr := g.s3.DeleteObjects(ctx, g.s3.Bucket(), keys); delErr != nil {
+				// Fall back to the per-candidate path, which retries with backoff.
+				predeleted = map[int64]struct{}{}
+				slog.WarnContext(ctx, "artwork revision GC: batched delete failed; falling back per candidate",
+					"component", "metadata", "keys", len(keys), "error", delErr)
+			}
+		}
+	}
+
 	pendingHeals := make([]artworkRevisionGCPendingHeal, 0, len(due))
 	batchStats, err := processArtworkRevisionGCBatch(
 		due,
 		func(candidate artworkRevisionGCCandidate) (artworkRevisionGCOutcome, error) {
-			outcome, pending, processErr := g.processCandidateToHeal(ctx, candidate, workerID)
+			_, alreadyDeleted := predeleted[candidate.id]
+			outcome, pending, processErr := g.processCandidateToHeal(ctx, candidate, workerID, alreadyDeleted)
 			if pending != nil {
 				pendingHeals = append(pendingHeals, *pending)
 			}
@@ -294,6 +326,7 @@ func (g *ArtworkRevisionGarbageCollector) processCandidateToHeal(
 	ctx context.Context,
 	candidate artworkRevisionGCCandidate,
 	workerID string,
+	objectsAlreadyDeleted bool,
 ) (artworkRevisionGCOutcome, *artworkRevisionGCPendingHeal, error) {
 	tx, err := g.pool.Begin(ctx)
 	if err != nil {
@@ -348,7 +381,7 @@ func (g *ArtworkRevisionGarbageCollector) processCandidateToHeal(
 	if len(objectKeys) == 0 {
 		objectKeys = artworkkey.ObjectKeys(originalPath, imageType)
 	}
-	if len(objectKeys) > 0 {
+	if len(objectKeys) > 0 && !objectsAlreadyDeleted {
 		deleted, err := g.s3.DeleteObjects(ctx, g.s3.Bucket(), objectKeys)
 		if err == nil && deleted != len(objectKeys) {
 			err = fmt.Errorf("deleted %d of %d artwork objects", deleted, len(objectKeys))
@@ -380,7 +413,7 @@ func (g *ArtworkRevisionGarbageCollector) processCandidate(
 	candidate artworkRevisionGCCandidate,
 	workerID string,
 ) (artworkRevisionGCOutcome, error) {
-	outcome, pending, err := g.processCandidateToHeal(ctx, candidate, workerID)
+	outcome, pending, err := g.processCandidateToHeal(ctx, candidate, workerID, false)
 	if err != nil || pending == nil {
 		return outcome, err
 	}
