@@ -17,7 +17,26 @@ import (
 )
 
 const (
-	artworkRevisionGCBatchSize = 100
+	// artworkRevisionGCBatchSize bounds both the claim and the dormant sweep.
+	//
+	// It was 100, chosen when each candidate cost its own ~2.9s DeleteObjects
+	// call and its own unindexed reference check. Both are gone: object deletes
+	// are batched into one call per run, and the reference check is indexed, so
+	// a candidate now costs a few milliseconds of database work rather than
+	// seconds.
+	//
+	// The ceiling is artworkRevisionGCLease: a run that outlives its lease has
+	// its rows re-claimed by the next worker while it is still processing them,
+	// which is a correctness problem rather than a slow one. The batch must
+	// therefore finish well inside 15 minutes on a deployment much slower than
+	// the one these figures came from.
+	//
+	// Measured there: the per-candidate database work is 0.17ms (2000
+	// candidates in 345ms), each candidate carries 4 objects, and object
+	// deletion runs at ~0.21ms per object. A 10000-candidate run is ~17.5s
+	// end to end, about 2% of the lease -- so even a deployment fifty times
+	// slower stays inside it.
+	artworkRevisionGCBatchSize = 10000
 	artworkRevisionGCLease     = 15 * time.Minute
 	// artworkRevisionDormantRecheck bounds how stale a parked (referenced)
 	// revision may get before the sweep re-verifies it. Displacement triggers
