@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -363,38 +362,25 @@ func (h *PlaybackHandler) writeProgressSideEffectsV2(ctx context.Context, record
 // progressSideEffectLock serializes progress side effects for one session.
 // Entries are dropped when the session stops (forgetProgressSideEffectLock);
 // a late caller that still holds a dropped mutex simply finishes on it.
-type progressSideEffectLockEntry struct {
-	mu   sync.Mutex
-	refs atomic.Int64
-}
-
 func (h *PlaybackHandler) progressSideEffectLock(sessionID string) func() {
-	h.progressSideEffectLocksMu.Lock()
-	entry, _ := h.progressSideEffectLocks.LoadOrStore(sessionID, &progressSideEffectLockEntry{})
-	lock, ok := entry.(*progressSideEffectLockEntry)
+	entry, _ := h.progressSideEffectLocks.LoadOrStore(sessionID, &sync.Mutex{})
+	mu, ok := entry.(*sync.Mutex)
 	if !ok {
-		h.progressSideEffectLocksMu.Unlock()
 		return func() {}
 	}
-	lock.refs.Add(1)
-	h.progressSideEffectLocksMu.Unlock()
-	lock.mu.Lock()
-	return func() {
-		lock.mu.Unlock()
-		if lock.refs.Add(-1) == 0 {
-			h.progressSideEffectLocksMu.Lock()
-			h.progressSideEffectLocks.CompareAndDelete(sessionID, lock)
-			h.progressSideEffectLocksMu.Unlock()
-		}
-	}
+	mu.Lock()
+	return mu.Unlock
 }
 
 // forgetProgressSideEffectLock releases the per-session lock entry once the
 // attempt is terminal, so a long-lived replica does not retain one entry per
 // historical session.
 func (h *PlaybackHandler) forgetProgressSideEffectLock(sessionID string) {
-	// Entries are reclaimed by the final unlock, after all late writers exit.
+	// Keep the mutex identity for the lifetime of the handler. Deleting it
+	// while a writer still holds the old mutex lets a late writer create a
+	// second mutex for the same session and run side effects concurrently.
 }
+
 func (h *PlaybackHandler) scrobblePauseTransitionV2(ctx context.Context, sess *playback.Session, wasPaused bool) {
 	if sess.DisableProgressPersistence || h.WatchScrobbler == nil || wasPaused == sess.IsPaused {
 		return
@@ -487,16 +473,24 @@ func (h *PlaybackHandler) finalizeStopV2(ctx context.Context, store playback.Pro
 		return receipt
 	}
 	if !claimed {
-		for i := 0; i < 20; i++ {
+		for {
 			if replay, _, err := store.StopAttempt(ctx, sessionID, receipt.StopID, nil); err == nil && replay.Finalized {
 				return replay
 			}
-			time.Sleep(25 * time.Millisecond)
+			if !receipt.FinalizingUntil.IsZero() && !time.Now().Before(receipt.FinalizingUntil) {
+				claimed, err = store.ClaimStopFinalization(ctx, sessionID, time.Now().Add(stopFinalizationLease))
+				if err == nil && claimed {
+					break
+				}
+			}
+			timer := time.NewTimer(25 * time.Millisecond)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return receipt
+			case <-timer.C:
+			}
 		}
-		if replay, _, err := store.StopAttempt(ctx, sessionID, receipt.StopID, nil); err == nil {
-			return replay
-		}
-		return receipt
 	}
 	receipt.HistoryID = h.finishStopV2(ctx, record, sessionID, receipt.Accepted)
 	receipt.Finalized = true
