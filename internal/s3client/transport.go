@@ -8,31 +8,41 @@ import (
 
 const (
 	// s3MaxConnsPerHost bounds concurrent connections per endpoint for the whole
-	// process. It equals the idle limit on purpose: a dial that loses the race to
-	// a freed idle connection then always fits in the idle pool instead of being
-	// closed unused. The SDK default (2048 connections, 10 idle) let bursts of
-	// short HEAD requests complete TLS handshakes on connections that never
+	// process. Matching the idle limit leaves room for a dial that loses the
+	// race to a freed idle connection. The SDK default (2048 connections,
+	// 10 idle) let short HEAD bursts complete TLS handshakes that never
 	// carried a request, and providers such as Mega S4 block clients for that.
 	s3MaxConnsPerHost = 16
 	// s3MaxIdleConns leaves the process-wide idle pool unbounded (zero in
 	// net/http). A global cap below hosts times the per-host cap would evict
 	// idle connections behind the transport's back and reopen the unused
-	// handshake problem once enough endpoints are configured. The per-host cap
-	// already bounds the total, and the set of hosts is the configured
-	// endpoints plus the delivery domain.
+	// handshake problem once enough endpoints are configured. Each host is
+	// bounded separately, and the SDK idle timeout reclaims unused connections.
 	s3MaxIdleConns = 0
 )
 
-// sharedHTTPClientValue is the one HTTP client behind every S3 client and the
-// delivery probe, so the per-host caps apply to the process rather than to each
-// bucket role separately. The SDK's dial, TLS and keep-alive defaults are kept.
+// All S3 clients share this pool. The SDK's dial, TLS and keep-alive defaults
+// are kept, along with its restriction to method-preserving redirects.
 var sharedHTTPClientValue = &http.Client{
 	Transport: awshttp.NewBuildableClient().WithTransportOptions(func(tr *http.Transport) {
 		tr.MaxConnsPerHost = s3MaxConnsPerHost
 		tr.MaxIdleConnsPerHost = s3MaxConnsPerHost
 		tr.MaxIdleConns = s3MaxIdleConns
 	}).GetTransport(),
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if req.Response.StatusCode != http.StatusTemporaryRedirect && req.Response.StatusCode != http.StatusPermanentRedirect {
+			return http.ErrUseLastResponse
+		}
+		if len(via) > 0 && via[len(via)-1].URL.Host != req.URL.Host {
+			req.Header.Del("X-Amz-Security-Token")
+		}
+		return nil
+	},
 }
+
+// Delivery URLs retain normal browser redirect behavior while sharing the
+// storage connection pool. S3 uploads must never become GETs after a redirect.
+var sharedDeliveryHTTPClient = &http.Client{Transport: sharedHTTPClientValue.Transport}
 
 func sharedHTTPClient() *http.Client { return sharedHTTPClientValue }
 

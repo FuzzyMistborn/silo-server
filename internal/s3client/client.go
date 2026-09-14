@@ -492,7 +492,7 @@ func (c *Client) ObjectAvailable(ctx context.Context, bucket, key string) (bool,
 
 	// The probe shares the S3 transport and its dial metrics: external
 	// delivery GETs are part of the same verifier burst as the storage HEADs.
-	resp, err := observedHTTPClient{inner: sharedHTTPClient(), role: c.role}.Do(req)
+	resp, err := observedHTTPClient{inner: sharedDeliveryHTTPClient, role: c.role}.Do(req)
 	if err != nil {
 		// The underlying url.Error includes the signed URL, so do not wrap it:
 		// token-auth query values must never reach logs.

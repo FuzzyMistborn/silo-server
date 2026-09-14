@@ -24,12 +24,10 @@ var s3Bytes = promauto.NewCounterVec(prometheus.CounterOpts{Name: "silo_s3_body_
 var s3BodyErrors = promauto.NewCounterVec(prometheus.CounterOpts{Name: "silo_s3_body_errors_total", Help: "S3 HTTP body read errors excluding EOF."}, []string{s3RoleLabel, "direction"})
 var s3ConnectionWait = promauto.NewHistogramVec(prometheus.HistogramOpts{Name: "silo_s3_connection_wait_seconds", Help: "S3 HTTP connection acquisition including dial and TLS setup.", Buckets: []float64{.001, .01, .05, .1, .5, 1, 5, 30}}, []string{s3RoleLabel, "reused"})
 
-// Dials and acquisitions are counted independently because their trace events
-// arrive in either order and a request can acquire more than once (retries,
-// redirects). Every request that ran on a fresh connection dialed exactly one,
-// so silo_s3_dials_total minus silo_s3_connection_wait_seconds_count{reused="false"}
-// is the number of dials whose request ended up on a reused connection instead.
-var s3Dials = promauto.NewCounterVec(prometheus.CounterOpts{Name: "silo_s3_dials_total", Help: "S3 HTTP connections dialed successfully. Subtract silo_s3_connection_wait_seconds_count{reused=\"false\"} to get dials whose request ran on a reused connection, which is the unused-handshake signal."}, []string{s3RoleLabel})
+// Count TCP dial completions independently of connection acquisitions: a
+// background dial may finish after a redirect, retry, or canceled request.
+// ConnectDone does not establish TLS completion or whether HTTP used the socket.
+var s3Dials = promauto.NewCounterVec(prometheus.CounterOpts{Name: "silo_s3_dials_total", Help: "S3 TCP dial attempts completed successfully, including background and parallel address attempts. Does not imply TLS completion or HTTP use."}, []string{s3RoleLabel})
 
 func s3Operation(op string) string {
 	switch op {
