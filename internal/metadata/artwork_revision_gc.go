@@ -125,11 +125,18 @@ func (g *ArtworkRevisionGarbageCollector) Run(ctx context.Context) (ArtworkRevis
 			predeleted[candidate.id] = struct{}{}
 		}
 		if len(keys) > 0 {
-			if _, delErr := g.s3.DeleteObjects(ctx, g.s3.Bucket(), keys); delErr != nil {
-				// Fall back to the per-candidate path, which retries with backoff.
+			// A short count means per-object failures without a top-level
+			// error, and it does not say WHICH keys survived. Treat it exactly
+			// like an error: drop the whole predeleted set so every candidate
+			// goes through the per-candidate path, which re-deletes its own
+			// keys and retries with backoff. Marking them deleted here would
+			// finalize rows whose objects still exist, and the candidate row is
+			// the only record that those objects are collectable.
+			deleted, delErr := g.s3.DeleteObjects(ctx, g.s3.Bucket(), keys)
+			if delErr != nil || deleted != len(keys) {
 				predeleted = map[int64]struct{}{}
-				slog.WarnContext(ctx, "artwork revision GC: batched delete failed; falling back per candidate",
-					"component", "metadata", "keys", len(keys), "error", delErr)
+				slog.WarnContext(ctx, "artwork revision GC: batched delete incomplete; falling back per candidate",
+					"component", "metadata", "keys", len(keys), "deleted", deleted, "error", delErr)
 			}
 		}
 	}
