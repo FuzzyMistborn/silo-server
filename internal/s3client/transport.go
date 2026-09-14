@@ -13,10 +13,10 @@ const (
 	// closed unused. The SDK default (2048 connections, 10 idle) let bursts of
 	// short HEAD requests complete TLS handshakes on connections that never
 	// carried a request, and providers such as Mega S4 block clients for that.
-	s3MaxConnsPerHost = 32
+	s3MaxConnsPerHost = 16
 	// s3MaxIdleConns bounds the idle pool across every S3 endpoint and the
 	// external delivery endpoint probed by ObjectAvailable.
-	s3MaxIdleConns = 128
+	s3MaxIdleConns = 64
 )
 
 // sharedHTTPClientValue is the one HTTP client behind every S3 client and the
