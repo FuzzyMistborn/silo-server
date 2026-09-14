@@ -23,6 +23,7 @@ var s3Retries = promauto.NewCounterVec(prometheus.CounterOpts{Name: "silo_s3_ret
 var s3Bytes = promauto.NewCounterVec(prometheus.CounterOpts{Name: "silo_s3_body_bytes_total", Help: "S3 HTTP body bytes consumed by the transport or caller, including retries and error responses; excludes headers and protocol overhead."}, []string{s3RoleLabel, "direction"})
 var s3BodyErrors = promauto.NewCounterVec(prometheus.CounterOpts{Name: "silo_s3_body_errors_total", Help: "S3 HTTP body read errors excluding EOF."}, []string{s3RoleLabel, "direction"})
 var s3ConnectionWait = promauto.NewHistogramVec(prometheus.HistogramOpts{Name: "silo_s3_connection_wait_seconds", Help: "S3 HTTP connection acquisition including dial and TLS setup.", Buckets: []float64{.001, .01, .05, .1, .5, 1, 5, 30}}, []string{s3RoleLabel, "reused"})
+var s3Dials = promauto.NewCounterVec(prometheus.CounterOpts{Name: "silo_s3_dials_total", Help: "S3 HTTP connections dialed on behalf of a request. outcome=used means the request ran on the dialed connection; outcome=surplus means the request was served by a reused connection after its dial completed, so the dialed connection went to the idle pool or was closed unused."}, []string{s3RoleLabel, "outcome"})
 
 func s3Operation(op string) string {
 	switch op {
@@ -75,6 +76,7 @@ type observedHTTPClient struct {
 func (c observedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	var mu sync.Mutex
 	var start time.Time
+	var dialed bool
 	ct := &httptrace.ClientTrace{
 		GetConn: func(string) { mu.Lock(); start = time.Now(); mu.Unlock() },
 		GotConn: func(info httptrace.GotConnInfo) {
@@ -89,6 +91,23 @@ func (c observedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 				reused = "true"
 			}
 			s3ConnectionWait.WithLabelValues(c.role, reused).Observe(time.Since(began).Seconds())
+			mu.Lock()
+			d := dialed
+			mu.Unlock()
+			if d {
+				outcome := "used"
+				if info.Reused {
+					outcome = "surplus"
+				}
+				s3Dials.WithLabelValues(c.role, outcome).Inc()
+			}
+		},
+		ConnectDone: func(network, addr string, err error) {
+			if err == nil {
+				mu.Lock()
+				dialed = true
+				mu.Unlock()
+			}
 		},
 	}
 	copy := req.Clone(httptrace.WithClientTrace(req.Context(), ct))

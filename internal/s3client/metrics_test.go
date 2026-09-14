@@ -77,3 +77,16 @@ func TestS3MetricsRetryStreamingAndPrivacy(t *testing.T) {
 		t.Fatal("local URL signing was counted as a storage request")
 	}
 }
+
+func TestS3DialsCounter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
+	defer srv.Close()
+	c := NewClient(BucketConfig{Endpoint: srv.URL, Bucket: "b", AccessKey: "k", SecretKey: "s", PathStyle: true, Role: "checks"})
+	before := testutil.ToFloat64(s3Dials.WithLabelValues("checks", "used"))
+	if _, err := c.ObjectExists(context.Background(), "b", "k"); err != nil {
+		t.Fatal(err)
+	}
+	if testutil.ToFloat64(s3Dials.WithLabelValues("checks", "used")) < before+1 {
+		t.Fatal("dial counter did not increase")
+	}
+}

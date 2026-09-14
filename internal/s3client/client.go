@@ -23,7 +23,6 @@ import (
 
 	"github.com/Silo-Server/silo-server/internal/telemetry"
 	"github.com/aws/aws-sdk-go-v2/aws"
-	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -101,7 +100,7 @@ func NewClient(cfg BucketConfig) *Client {
 	role := telemetry.Role(cfg.Role)
 	s3Client := s3.New(s3.Options{
 		APIOptions:   []func(*middleware.Stack) error{observeS3(role)},
-		HTTPClient:   observedHTTPClient{inner: awshttp.NewBuildableClient(), role: role},
+		HTTPClient:   observedHTTPClient{inner: sharedHTTPClient(), role: role},
 		Region:       region,
 		BaseEndpoint: aws.String(cfg.Endpoint),
 		Credentials: credentials.NewStaticCredentialsProvider(
@@ -489,7 +488,7 @@ func (c *Client) ObjectAvailable(ctx context.Context, bucket, key string) (bool,
 	}
 	req.Header.Set("Range", "bytes=0-0")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := sharedHTTPClient().Do(req)
 	if err != nil {
 		// The underlying url.Error includes the signed URL, so do not wrap it:
 		// token-auth query values must never reach logs.
