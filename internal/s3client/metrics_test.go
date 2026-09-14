@@ -82,38 +82,11 @@ func TestS3DialsCounter(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer srv.Close()
 	c := NewClient(BucketConfig{Endpoint: srv.URL, Bucket: "b", AccessKey: "k", SecretKey: "s", PathStyle: true, Role: "checks"})
-	before := testutil.ToFloat64(s3Dials.WithLabelValues("checks", "used"))
+	before := testutil.ToFloat64(s3Dials.WithLabelValues("checks"))
 	if _, err := c.ObjectExists(context.Background(), "b", "k"); err != nil {
 		t.Fatal(err)
 	}
-	if testutil.ToFloat64(s3Dials.WithLabelValues("checks", "used")) < before+1 {
+	if testutil.ToFloat64(s3Dials.WithLabelValues("checks")) < before+1 {
 		t.Fatal("dial counter did not increase")
-	}
-}
-
-func TestDialOutcomeCountsEitherEventOrder(t *testing.T) {
-	var outcomes []string
-	d := &dialOutcome{observe: func(o string) { outcomes = append(outcomes, o) }}
-
-	// Dial wins: ConnectDone then GotConn on the new connection.
-	d.connected()
-	d.gotConn(false)
-	// Dial loses to a freed idle connection: GotConn(reused) arrives first
-	// and ConnectDone only when the background dial finishes.
-	d.gotConn(true)
-	d.connected()
-	// Plain reuse with no dial never counts.
-	d.gotConn(true)
-	// Stale idle connection fails on write and the transport re-acquires
-	// inside the same request: the replacement dial pairs with its own
-	// GotConn, not with the stale one.
-	d.acquiring()
-	d.gotConn(true)
-	d.acquiring()
-	d.connected()
-	d.gotConn(false)
-
-	if len(outcomes) != 3 || outcomes[0] != "used" || outcomes[1] != "surplus" || outcomes[2] != "used" {
-		t.Fatalf("outcomes = %v, want [used surplus used]", outcomes)
 	}
 }
