@@ -14,9 +14,13 @@ const (
 	// short HEAD requests complete TLS handshakes on connections that never
 	// carried a request, and providers such as Mega S4 block clients for that.
 	s3MaxConnsPerHost = 16
-	// s3MaxIdleConns bounds the idle pool across every S3 endpoint and the
-	// external delivery endpoint probed by ObjectAvailable.
-	s3MaxIdleConns = 64
+	// s3MaxIdleConns leaves the process-wide idle pool unbounded (zero in
+	// net/http). A global cap below hosts times the per-host cap would evict
+	// idle connections behind the transport's back and reopen the unused
+	// handshake problem once enough endpoints are configured. The per-host cap
+	// already bounds the total, and the set of hosts is the configured
+	// endpoints plus the delivery domain.
+	s3MaxIdleConns = 0
 )
 
 // sharedHTTPClientValue is the one HTTP client behind every S3 client and the

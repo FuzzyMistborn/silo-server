@@ -27,36 +27,77 @@ func TestBurstNeverClosesUnusedConnections(t *testing.T) {
 	type connectionState struct {
 		active bool
 		closed bool
+		state  http.ConnState
 	}
 	var mu sync.Mutex
 	connections := make(map[net.Conn]*connectionState)
+	inHandler := 0
+	release := make(chan struct{})
+	changed := make(chan struct{}, 1)
+	notify := func() {
+		select {
+		case changed <- struct{}{}:
+		default:
+		}
+	}
+	waitFor := func(what string, cond func() bool) {
+		t.Helper()
+		deadline := time.After(5 * time.Second)
+		for {
+			mu.Lock()
+			ok := cond()
+			mu.Unlock()
+			if ok {
+				return
+			}
+			select {
+			case <-changed:
+			case <-deadline:
+				t.Fatalf("timed out waiting for %s", what)
+			}
+		}
+	}
+
+	// Every handler parks until the test releases the round, so the cap's
+	// worth of connections are provably busy at the same time and the rest of
+	// the burst has to queue for one instead of dialing.
 	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(5 * time.Millisecond)
+		mu.Lock()
+		inHandler++
+		gate := release
+		mu.Unlock()
+		notify()
+		<-gate
 		w.WriteHeader(http.StatusOK)
 	}))
 	srv.Config.ConnState = func(conn net.Conn, state http.ConnState) {
 		mu.Lock()
-		defer mu.Unlock()
-		if state == http.StateNew {
-			connections[conn] = &connectionState{}
-			return
-		}
 		cs := connections[conn]
 		if cs == nil {
-			return
+			cs = &connectionState{}
+			connections[conn] = cs
 		}
-		if state == http.StateActive {
+		cs.state = state
+		switch state {
+		case http.StateActive:
 			cs.active = true
-		}
-		if state == http.StateClosed {
+		case http.StateClosed, http.StateHijacked:
 			cs.closed = true
 		}
+		mu.Unlock()
+		notify()
 	}
 	srv.Start()
 	defer srv.Close()
 
 	c := NewClient(BucketConfig{Endpoint: srv.URL, Bucket: "b", AccessKey: "k", SecretKey: "s", PathStyle: true, Role: "burst"})
 	for round := 0; round < 4; round++ {
+		mu.Lock()
+		inHandler = 0
+		release = make(chan struct{})
+		gate := release
+		mu.Unlock()
+
 		var wg sync.WaitGroup
 		for i := 0; i < 3*s3MaxConnsPerHost; i++ {
 			wg.Add(1)
@@ -67,40 +108,42 @@ func TestBurstNeverClosesUnusedConnections(t *testing.T) {
 				}
 			}()
 		}
-		wg.Wait()
-		time.Sleep(10 * time.Millisecond)
-	}
-
-	deadline := time.Now().Add(time.Second)
-	for {
+		waitFor("the cap's worth of requests to be in flight", func() bool { return inHandler >= s3MaxConnsPerHost })
 		mu.Lock()
-		resolved := true
+		open := 0
 		for _, cs := range connections {
-			if !cs.active && !cs.closed {
-				resolved = false
-				break
+			if !cs.closed {
+				open++
 			}
 		}
 		mu.Unlock()
-		if resolved || time.Now().After(deadline) {
-			break
+		// Release before reporting so a failure never leaves handlers parked
+		// and the server's shutdown waiting on them.
+		close(gate)
+		wg.Wait()
+		if open != s3MaxConnsPerHost {
+			t.Fatalf("round %d: %d open connections with %d requests parked, want exactly %d", round, open, s3MaxConnsPerHost, s3MaxConnsPerHost)
 		}
-		time.Sleep(5 * time.Millisecond)
+		// Let every connection return to the idle pool so the next round races
+		// pending dials against a full pool, which is where surplus dials came from.
+		waitFor("all connections to go idle", func() bool {
+			for _, cs := range connections {
+				if !cs.closed && cs.state != http.StateIdle {
+					return false
+				}
+			}
+			return true
+		})
 	}
 
 	mu.Lock()
+	defer mu.Unlock()
 	if len(connections) > s3MaxConnsPerHost {
-		mu.Unlock()
 		t.Fatalf("saw %d connections, want at most %d", len(connections), s3MaxConnsPerHost)
 	}
 	for conn, cs := range connections {
-		if !cs.active && !cs.closed {
-			t.Errorf("connection %v remained unresolved", conn)
-		}
 		if !cs.active {
-			t.Errorf("connection %v never reached StateActive", conn)
+			t.Errorf("connection %v was dialed but never carried a request", conn.RemoteAddr())
 		}
 	}
-	mu.Unlock()
-	srv.CloseClientConnections()
 }
