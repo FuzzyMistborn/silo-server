@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -362,25 +363,33 @@ func (h *PlaybackHandler) writeProgressSideEffectsV2(ctx context.Context, record
 // progressSideEffectLock serializes progress side effects for one session.
 // Entries are dropped when the session stops (forgetProgressSideEffectLock);
 // a late caller that still holds a dropped mutex simply finishes on it.
+type progressSideEffectLockEntry struct {
+	mu   sync.Mutex
+	refs atomic.Int64
+}
+
 func (h *PlaybackHandler) progressSideEffectLock(sessionID string) func() {
-	entry, _ := h.progressSideEffectLocks.LoadOrStore(sessionID, &sync.Mutex{})
-	mu, ok := entry.(*sync.Mutex)
+	entry, _ := h.progressSideEffectLocks.LoadOrStore(sessionID, &progressSideEffectLockEntry{})
+	lock, ok := entry.(*progressSideEffectLockEntry)
 	if !ok {
 		return func() {}
 	}
-	mu.Lock()
-	return mu.Unlock
+	lock.refs.Add(1)
+	lock.mu.Lock()
+	return func() {
+		lock.mu.Unlock()
+		if lock.refs.Add(-1) == 0 {
+			h.progressSideEffectLocks.CompareAndDelete(sessionID, lock)
+		}
+	}
 }
 
 // forgetProgressSideEffectLock releases the per-session lock entry once the
 // attempt is terminal, so a long-lived replica does not retain one entry per
 // historical session.
 func (h *PlaybackHandler) forgetProgressSideEffectLock(sessionID string) {
-	// Keep the mutex identity for the lifetime of the handler. Deleting it
-	// while a writer still holds the old mutex lets a late writer create a
-	// second mutex for the same session and run side effects concurrently.
+	// Entries are reclaimed by the final unlock, after all late writers exit.
 }
-
 func (h *PlaybackHandler) scrobblePauseTransitionV2(ctx context.Context, sess *playback.Session, wasPaused bool) {
 	if sess.DisableProgressPersistence || h.WatchScrobbler == nil || wasPaused == sess.IsPaused {
 		return
