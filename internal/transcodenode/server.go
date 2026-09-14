@@ -1576,9 +1576,17 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	_, hasExisting := s.sessions[req.SessionID]
 	s.mu.Unlock()
+	replacementDir := ""
+	published := false
+	defer func() {
+		if replacementDir != "" && !published {
+			_ = os.RemoveAll(replacementDir)
+		}
+	}()
 	if hasExisting {
 		if tempDir, tempErr := os.MkdirTemp(s.transcodeDir, req.SessionID+"-replacement-"); tempErr == nil {
 			opts.OutputDir = tempDir
+			replacementDir = tempDir
 		} else {
 			unlock()
 			http.Error(w, "failed to prepare transcode replacement", http.StatusInternalServerError)
@@ -1655,6 +1663,7 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 
 	s.mu.Lock()
 	s.sessions[req.SessionID] = session
+	published = true
 	s.noteSessionAccessLocked(req.SessionID)
 	s.mu.Unlock()
 	unlock()
