@@ -10,7 +10,7 @@ scrape_configs:
     scrape_timeout: 10s
     sample_limit: 20000
     static_configs:
-      - targets: [silo-api:8080]
+      - targets: [silo:9091]
         labels:
           cluster: example
           process_role: api

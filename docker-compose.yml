@@ -69,6 +69,7 @@ services:
       REDIS_URL: redis://redis:6379
       SILO_PLUGIN_CACHE_DIR: /var/lib/silo/plugins
       POSTGRES_TUNE: ${POSTGRES_TUNE:-auto}
+      SILO_METRICS_LISTEN: ${SILO_METRICS_LISTEN:-0.0.0.0:9091}
     ports:
       - "${PORT:-8090}:8080"
       - "${JF_PORT:-8096}:8096"
@@ -98,6 +99,42 @@ services:
     env_file:
       - path: .env
         required: false
+
+  prometheus:
+    image: prom/prometheus:v3.5.0
+    restart: unless-stopped
+    profiles: [observability]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-7d}
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/silo.rules.yml:/etc/prometheus/silo.rules.yml:ro
+      - ${SILO_DATA_ROOT:-/opt/silo}/prometheus:/prometheus
+    depends_on:
+      silo:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:12.1.1
+    restart: unless-stopped
+    profiles: [observability]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?Set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ${SILO_DATA_ROOT:-/opt/silo}/grafana:/var/lib/grafana
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana-dashboard.json:/var/lib/grafana/dashboards/silo.json:ro
+    depends_on:
+      prometheus:
+        condition: service_started
   # Optional distributed-mode example. Most single-host installs should
   # just use the integrated service above.
   # silo-proxy:
