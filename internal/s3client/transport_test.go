@@ -1,6 +1,7 @@
 package s3client
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -73,6 +74,30 @@ func TestS3ClientPreservesReplayableRedirects(t *testing.T) {
 				t.Fatal("upload did not reach redirect target")
 			}
 		})
+	}
+}
+
+func TestS3ClientStopsReplayableRedirectLoops(t *testing.T) {
+	var hops atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hops.Add(1)
+		w.Header().Set("Location", "/again")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/object", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := sharedHTTPClient().Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	if !errors.Is(err, errTooManyRedirects) {
+		t.Fatalf("err = %v, want redirect limit", err)
+	}
+	if got := hops.Load(); got != maxRedirects {
+		t.Fatalf("server saw %d requests, want %d", got, maxRedirects)
 	}
 }
 

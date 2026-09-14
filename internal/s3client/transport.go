@@ -1,10 +1,17 @@
 package s3client
 
 import (
+	"errors"
 	"net/http"
 
 	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 )
+
+// maxRedirects mirrors net/http's default so a misconfigured endpoint that
+// keeps answering 307 or 308 cannot spin an S3 call until its context expires.
+const maxRedirects = 10
+
+var errTooManyRedirects = errors.New("s3: stopped after 10 redirects")
 
 const (
 	// s3MaxConnsPerHost bounds concurrent connections per endpoint for the whole
@@ -30,6 +37,10 @@ var sharedHTTPClientValue = &http.Client{
 		tr.MaxIdleConns = s3MaxIdleConns
 	}).GetTransport(),
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		// Setting CheckRedirect replaces net/http's default, so keep its hop limit.
+		if len(via) >= maxRedirects {
+			return errTooManyRedirects
+		}
 		if req.Response.StatusCode != http.StatusTemporaryRedirect && req.Response.StatusCode != http.StatusPermanentRedirect {
 			return http.ErrUseLastResponse
 		}
