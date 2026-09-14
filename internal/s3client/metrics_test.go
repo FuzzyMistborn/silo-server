@@ -90,3 +90,22 @@ func TestS3DialsCounter(t *testing.T) {
 		t.Fatal("dial counter did not increase")
 	}
 }
+
+func TestDialOutcomeCountsEitherEventOrder(t *testing.T) {
+	var outcomes []string
+	d := &dialOutcome{observe: func(o string) { outcomes = append(outcomes, o) }}
+
+	// Dial wins: ConnectDone then GotConn on the new connection.
+	d.connected()
+	d.gotConn(false)
+	// Dial loses to a freed idle connection: GotConn(reused) arrives first
+	// and ConnectDone only when the background dial finishes.
+	d.gotConn(true)
+	d.connected()
+	// Plain reuse with no dial never counts.
+	d.gotConn(true)
+
+	if len(outcomes) != 2 || outcomes[0] != "used" || outcomes[1] != "surplus" {
+		t.Fatalf("outcomes = %v, want [used surplus]", outcomes)
+	}
+}

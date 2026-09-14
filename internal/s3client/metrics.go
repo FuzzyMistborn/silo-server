@@ -73,10 +73,50 @@ type observedHTTPClient struct {
 	role  string
 }
 
+// dialOutcome pairs a request's dial with the connection it finally ran on.
+// The two trace events arrive in either order: a dial that wins delivers
+// ConnectDone before GotConn, while a dial that loses to a freed idle
+// connection sees GotConn (reused) first and ConnectDone only when the
+// background dial finishes. Counting happens when the second event lands.
+type dialOutcome struct {
+	mu      sync.Mutex
+	dialed  bool
+	got     bool
+	reused  bool
+	observe func(outcome string)
+}
+
+func (d *dialOutcome) connected() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.dialed = true
+	d.flushLocked()
+}
+
+func (d *dialOutcome) gotConn(reused bool) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.got, d.reused = true, reused
+	d.flushLocked()
+}
+
+func (d *dialOutcome) flushLocked() {
+	if !d.dialed || !d.got {
+		return
+	}
+	outcome := "used"
+	if d.reused {
+		outcome = "surplus"
+	}
+	d.observe(outcome)
+	// A retried attempt on the same request gets its own pair of events.
+	d.dialed, d.got = false, false
+}
+
 func (c observedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	var mu sync.Mutex
 	var start time.Time
-	var dialed bool
+	dials := &dialOutcome{observe: func(outcome string) { s3Dials.WithLabelValues(c.role, outcome).Inc() }}
 	ct := &httptrace.ClientTrace{
 		GetConn: func(string) { mu.Lock(); start = time.Now(); mu.Unlock() },
 		GotConn: func(info httptrace.GotConnInfo) {
@@ -91,22 +131,11 @@ func (c observedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 				reused = "true"
 			}
 			s3ConnectionWait.WithLabelValues(c.role, reused).Observe(time.Since(began).Seconds())
-			mu.Lock()
-			d := dialed
-			mu.Unlock()
-			if d {
-				outcome := "used"
-				if info.Reused {
-					outcome = "surplus"
-				}
-				s3Dials.WithLabelValues(c.role, outcome).Inc()
-			}
+			dials.gotConn(info.Reused)
 		},
 		ConnectDone: func(network, addr string, err error) {
 			if err == nil {
-				mu.Lock()
-				dialed = true
-				mu.Unlock()
+				dials.connected()
 			}
 		},
 	}
