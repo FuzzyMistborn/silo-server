@@ -78,12 +78,21 @@ type observedHTTPClient struct {
 // ConnectDone before GotConn, while a dial that loses to a freed idle
 // connection sees GotConn (reused) first and ConnectDone only when the
 // background dial finishes. Counting happens when the second event lands.
+// A new GetConn discards an unmatched GotConn: when a stale idle connection
+// fails on write, the transport acquires again inside the same request, and
+// that replacement dial must not be paired with the stale connection.
 type dialOutcome struct {
 	mu      sync.Mutex
 	dialed  bool
 	got     bool
 	reused  bool
 	observe func(outcome string)
+}
+
+func (d *dialOutcome) acquiring() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.got = false
 }
 
 func (d *dialOutcome) connected() {
@@ -118,7 +127,12 @@ func (c observedHTTPClient) Do(req *http.Request) (*http.Response, error) {
 	var start time.Time
 	dials := &dialOutcome{observe: func(outcome string) { s3Dials.WithLabelValues(c.role, outcome).Inc() }}
 	ct := &httptrace.ClientTrace{
-		GetConn: func(string) { mu.Lock(); start = time.Now(); mu.Unlock() },
+		GetConn: func(string) {
+			mu.Lock()
+			start = time.Now()
+			mu.Unlock()
+			dials.acquiring()
+		},
 		GotConn: func(info httptrace.GotConnInfo) {
 			mu.Lock()
 			began := start

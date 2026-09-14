@@ -104,8 +104,16 @@ func TestDialOutcomeCountsEitherEventOrder(t *testing.T) {
 	d.connected()
 	// Plain reuse with no dial never counts.
 	d.gotConn(true)
+	// Stale idle connection fails on write and the transport re-acquires
+	// inside the same request: the replacement dial pairs with its own
+	// GotConn, not with the stale one.
+	d.acquiring()
+	d.gotConn(true)
+	d.acquiring()
+	d.connected()
+	d.gotConn(false)
 
-	if len(outcomes) != 2 || outcomes[0] != "used" || outcomes[1] != "surplus" {
-		t.Fatalf("outcomes = %v, want [used surplus]", outcomes)
+	if len(outcomes) != 3 || outcomes[0] != "used" || outcomes[1] != "surplus" || outcomes[2] != "used" {
+		t.Fatalf("outcomes = %v, want [used surplus used]", outcomes)
 	}
 }
