@@ -369,17 +369,22 @@ type progressSideEffectLockEntry struct {
 }
 
 func (h *PlaybackHandler) progressSideEffectLock(sessionID string) func() {
+	h.progressSideEffectLocksMu.Lock()
 	entry, _ := h.progressSideEffectLocks.LoadOrStore(sessionID, &progressSideEffectLockEntry{})
 	lock, ok := entry.(*progressSideEffectLockEntry)
 	if !ok {
+		h.progressSideEffectLocksMu.Unlock()
 		return func() {}
 	}
 	lock.refs.Add(1)
+	h.progressSideEffectLocksMu.Unlock()
 	lock.mu.Lock()
 	return func() {
 		lock.mu.Unlock()
 		if lock.refs.Add(-1) == 0 {
+			h.progressSideEffectLocksMu.Lock()
 			h.progressSideEffectLocks.CompareAndDelete(sessionID, lock)
+			h.progressSideEffectLocksMu.Unlock()
 		}
 	}
 }
