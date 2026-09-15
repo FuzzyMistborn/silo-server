@@ -1,0 +1,12 @@
+# Shared local deployment additions. The base compose remains usable on its own.
+services:
+  silo:
+    environment:
+      SILO_METRICS_LISTEN: ${SILO_METRICS_LISTEN:-0.0.0.0:9091}
+    volumes:
+      - type: bind
+        source: /mnt/sharedrives/zd-storage-books
+        target: /mnt/sharedrives/zd-storage-books
+        read_only: true
+        bind:
+          create_host_path: false
