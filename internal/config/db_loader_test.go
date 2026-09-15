@@ -35,6 +35,16 @@ func TestLoadFromDBMetadataPresignExpiryRejectsInvalidDuration(t *testing.T) {
 	}
 }
 
+func TestLoadFromDBArtworkURLTTLIgnoresNonPositivePresignDefault(t *testing.T) {
+	cfg, err := LoadFromDB(map[string]string{"s3.metadata_presign_expiry": "0s"})
+	if err != nil {
+		t.Fatalf("LoadFromDB() with zero presign expiry returned error: %v", err)
+	}
+	if cfg.Artwork.URLTTL != 4*time.Hour {
+		t.Fatalf("artwork URL TTL = %s, want default 4h", cfg.Artwork.URLTTL)
+	}
+}
+
 func TestLoadFromDBDownloadArtifactDirRequiresAbsolutePath(t *testing.T) {
 	cfg, err := LoadFromDB(map[string]string{downloadArtifactDirSettingKey: "/mnt/silo-downloads"})
 	if err != nil {

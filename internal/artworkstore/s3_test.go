@@ -474,3 +474,15 @@ func TestS3StoreMaintenancePrefixDeleteIsLegacyOnly(t *testing.T) {
 		t.Fatalf("portable prefix delete error = %v, want ErrInvalidKey", err)
 	}
 }
+
+func TestQuotedETagOnlyAcceptsValidWeakPrefix(t *testing.T) {
+	for input, want := range map[string]string{
+		`W/"abc"`: `W/"abc"`,
+		`Wxyz`:    `"Wxyz"`,
+		`w/"abc"`: "\"w/\"abc\"\"",
+	} {
+		if got := quotedETag(input); got != want {
+			t.Fatalf("quotedETag(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

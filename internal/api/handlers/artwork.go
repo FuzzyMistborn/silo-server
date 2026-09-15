@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -466,6 +467,27 @@ func (h *ArtworkHandler) resolveFallback(ctx context.Context, state metadata.Art
 
 func fallbackVariant(data []byte, mediaType, imageType, variant string) ([]byte, string) {
 	if variant == artworkkey.OriginalVariant {
+		generate := imageutil.GenerateVariants
+		originalKey := artworkkey.OriginalVariant
+		if imageType == artworkkey.ImageTypeAvatar {
+			generate = imageutil.GenerateSquareVariants
+			// Square generation keeps its original crop under the original key;
+			// request-time recovery still needs the same 1920px cap as other
+			// original artwork, so use the bounded ladder rung.
+			originalKey = fmt.Sprintf("w%d", imageutil.MaxCachedOriginalDimension)
+		}
+		widths := []int(nil)
+		if imageType == artworkkey.ImageTypeAvatar {
+			widths = []int{imageutil.MaxCachedOriginalDimension}
+		}
+		if generated, err := generate(data, widths); err == nil {
+			for _, candidate := range generated.Variants {
+				if candidate.Key == originalKey {
+					return candidate.Data, webpContentType
+				}
+			}
+		}
+		// Keep request-time recovery resilient if re-encoding fails.
 		return data, mediaType
 	}
 	width, ok := imagesize.VariantWidthPx(variant)

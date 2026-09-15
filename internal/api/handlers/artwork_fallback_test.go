@@ -20,6 +20,7 @@ import (
 	"github.com/Silo-Server/silo-server/internal/artworkkey"
 	"github.com/Silo-Server/silo-server/internal/artworkstore"
 	"github.com/Silo-Server/silo-server/internal/artworkurl"
+	"github.com/Silo-Server/silo-server/internal/imageutil"
 	"github.com/Silo-Server/silo-server/internal/metadata"
 	"github.com/Silo-Server/silo-server/internal/s3client"
 )
@@ -106,8 +107,15 @@ func TestArtworkFallbackGeneratesSizedWebPAndPreservesOriginal(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve original fallback: %v", err)
 	}
-	if passthrough.mediaType != "image/jpeg" || !bytes.Equal(passthrough.data, original) {
-		t.Fatalf("original fallback was transformed: media_type=%q bytes_equal=%v", passthrough.mediaType, bytes.Equal(passthrough.data, original))
+	if passthrough.mediaType != "image/webp" || bytes.Equal(passthrough.data, original) {
+		t.Fatalf("original fallback was not normalized: media_type=%q bytes_equal=%v", passthrough.mediaType, bytes.Equal(passthrough.data, original))
+	}
+	originalSize, err := bimg.NewImage(passthrough.data).Size()
+	if err != nil {
+		t.Fatalf("read normalized original dimensions: %v", err)
+	}
+	if originalSize.Width > imageutil.MaxCachedOriginalDimension || originalSize.Height > imageutil.MaxCachedOriginalDimension {
+		t.Fatalf("normalized original dimensions = %dx%d, want max edge %d", originalSize.Width, originalSize.Height, imageutil.MaxCachedOriginalDimension)
 	}
 }
 

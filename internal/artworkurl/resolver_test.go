@@ -54,13 +54,15 @@ func TestResolveTargetURLRefusesEmptyReference(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewResolver: %v", err)
 	}
-	target := Target{Surface: SurfaceItemLogos, Keys: []string{"movie-1"}, Slot: "logo"}.WithReference("")
-	if _, err := resolver.ResolveTargetURL(context.Background(), target, "w500"); !errors.Is(err, artworkstore.ErrInvalidKey) {
-		t.Fatalf("ResolveTargetURL with empty reference = %v, want ErrInvalidKey", err)
-	}
-	resolved := resolver.ResolveTargetRequests(context.Background(), []TargetRequest{{Target: target, Variant: "w500"}})
-	if len(resolved) != 0 {
-		t.Fatalf("ResolveTargetRequests minted %d capabilities for an empty reference, want 0", len(resolved))
+	for _, reference := range []string{"", "-"} {
+		target := Target{Surface: SurfaceItemLogos, Keys: []string{"movie-1"}, Slot: "logo"}.WithReference(reference)
+		if _, err := resolver.ResolveTargetURL(context.Background(), target, "w500"); !errors.Is(err, artworkstore.ErrInvalidKey) {
+			t.Fatalf("ResolveTargetURL with reference %q = %v, want ErrInvalidKey", reference, err)
+		}
+		resolved := resolver.ResolveTargetRequests(context.Background(), []TargetRequest{{Target: target, Variant: "w500"}})
+		if len(resolved) != 0 {
+			t.Fatalf("ResolveTargetRequests minted %d capabilities for reference %q, want 0", len(resolved), reference)
+		}
 	}
 }
 

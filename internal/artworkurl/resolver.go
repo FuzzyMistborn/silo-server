@@ -42,7 +42,7 @@ func (r *Resolver) ResolveTargetURL(ctx context.Context, target Target, variant 
 	// empty URL field — so refuse here and let batch resolution omit the entry.
 	// Lost artwork is different: its reference is still selected, so its
 	// capability mints and delivery serves fallback bytes or the placeholder.
-	if target.Reference == "" {
+	if strings.TrimSpace(target.Reference) == "" || strings.TrimSpace(target.Reference) == "-" {
 		return artworkstore.ResolvedURL{}, fmt.Errorf("%w: artwork target has no selected reference", artworkstore.ErrInvalidKey)
 	}
 	if err := target.Validate(); err != nil {

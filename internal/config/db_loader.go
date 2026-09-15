@@ -350,7 +350,11 @@ func LoadFromDB(m map[string]string) (*Config, error) {
 
 	// The artwork URL lifetime mirrors the S3 presign lifetime by default, so
 	// an install that tuned one does not end up with two different windows.
-	artworkURLTTL, err := durationOr(m, ArtworkURLTTLKey, cfg.S3.MetadataPresignExpiry)
+	artworkTTLDefault := cfg.S3.MetadataPresignExpiry
+	if artworkTTLDefault <= 0 {
+		artworkTTLDefault = 4 * time.Hour
+	}
+	artworkURLTTL, err := durationOr(m, ArtworkURLTTLKey, artworkTTLDefault)
 	if err != nil {
 		return nil, err
 	}

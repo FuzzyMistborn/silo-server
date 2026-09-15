@@ -110,7 +110,10 @@ func NewArtworkStorageService(pool *pgxpool.Pool, store ArtworkInventoryStore, b
 }
 
 func (s *ArtworkStorageService) storeGeneration() string {
-	if s == nil || s.generation == nil {
+	if s == nil {
+		return ":"
+	}
+	if s.generation == nil {
 		return strings.TrimSpace(s.backend) + ":"
 	}
 	return strings.TrimSpace(s.backend) + ":" + strings.TrimSpace(s.generation())
@@ -335,6 +338,7 @@ func (s *ArtworkStorageService) discoverOrphans(ctx context.Context, cp *Artwork
 		}
 		if len(objects) > 0 {
 			keys := make([]string, 0, len(objects))
+			seen := make(map[string]struct{}, len(objects))
 			for i := range objects {
 				if artworkkey.IsAdoptionIndexKey(objects[i].Key) {
 					cp.IndexObjects++
@@ -352,6 +356,10 @@ func (s *ArtworkStorageService) discoverOrphans(ctx context.Context, cp *Artwork
 					continue
 				}
 				if artworkkey.IsStoredArtworkKey(objects[i].Key) {
+					if _, exists := seen[objects[i].Key]; exists {
+						return fmt.Errorf("artwork inventory: duplicate store object %q", objects[i].Key)
+					}
+					seen[objects[i].Key] = struct{}{}
 					keys = append(keys, objects[i].Key)
 				}
 			}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/Silo-Server/silo-server/internal/s3client"
 )
@@ -192,7 +193,7 @@ func quotedETag(raw string) string {
 	if raw == "" {
 		return ""
 	}
-	if raw[0] == '"' || raw[0] == 'W' {
+	if raw[0] == '"' || strings.HasPrefix(raw, `W/"`) {
 		return raw
 	}
 	return `"` + raw + `"`
