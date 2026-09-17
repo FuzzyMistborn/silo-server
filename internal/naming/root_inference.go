@@ -14,7 +14,7 @@ var (
 	inferTitleYearRe       = regexp.MustCompile(`^(.+?)\s*\((\d{4})\)`)
 	inferWhitespaceTokenRe = regexp.MustCompile(`\s+`)
 	inferReleaseTokenRe    = regexp.MustCompile(`(?i)\b(?:remux|bluray|bdrip|brrip|web[ ._-]?dl|webrip|hdr|dv|2160p|1080p|720p|x264|x265|h\.?264|h\.?265|hevc|av1|aac|dts|truehd|atmos)\b`)
-	inferSeasonEpisodeRe   = regexp.MustCompile(`(?i)[Ss](\d{1,4})[Ee](\d{1,3})`)
+	inferSeasonEpisodeRe   = regexp.MustCompile(`(?i)[Ss](\d{1,4})[._\- ]?[Ee](\d{1,3})`)
 	inferSeasonDirRe       = regexp.MustCompile(`(?i)^Season\s+(\d{1,4})(?:\s.*)?$`)
 	inferNumericSeasonRe   = regexp.MustCompile(`^\d{1,4}$`)
 	inferSpecialsDirRe     = regexp.MustCompile(`(?i)^(?:specials?|extras?)$`)
